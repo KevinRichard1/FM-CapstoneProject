@@ -312,6 +312,8 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     device = resolve_device(args.device)
     task = DATASET_SETTINGS[dataset_name]["task"]
     tag_suffix = f"_{args.run_tag}" if args.run_tag else ""
+    if args.skip_test:
+        tag_suffix += "_tune"
     suffix = tag_suffix + ("_random" if args.random_backbone else "")
     model_name = f"moment{suffix}_{'linear_probe' if method == 'linear' else 'lora'}"
     logger = get_logger(
@@ -336,6 +338,7 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         "checkpoint": args.checkpoint,
         "random_backbone": args.random_backbone,
         "run_tag": args.run_tag,
+        "skip_test": args.skip_test,
         "seed": args.seed,
         "device": str(device),
         "batch_size": args.batch_size,
@@ -468,7 +471,8 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     rows: list[dict] = []
     final_results: dict[str, dict] = {}
     final_subjects: dict[str, dict | None] = {}
-    for split in ("train", "val", "test"):
+    splits = ("train", "val") if args.skip_test else ("train", "val", "test")
+    for split in splits:
         results, metrics, subject_results = evaluate_split(
             model, loaders[split], device, dataset_name, task, identifier_keys
         )
@@ -517,7 +521,14 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     )
     config_path.write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
 
-    if task == "classification":
+    if args.skip_test:
+        if task == "classification":
+            val_metrics = evaluate_predictions("classification", final_results["val"])
+            primary = f"validation_macro_f1={val_metrics['macro_f1']:.4f}"
+        else:
+            val_metrics = evaluate_predictions("forecasting", final_results["val"])
+            primary = f"validation_rmse={val_metrics['rmse']:.4f}"
+    elif task == "classification":
         test_metrics = evaluate_predictions("classification", final_results["test"])
         primary = f"test_macro_f1={test_metrics['macro_f1']:.4f}"
     else:
@@ -552,6 +563,11 @@ def parse_args() -> argparse.Namespace:
         "--run-tag",
         default=None,
         help="Suffix appended to output names so reruns do not overwrite prior results.",
+    )
+    parser.add_argument(
+        "--skip-test",
+        action="store_true",
+        help="Tuning mode: evaluate train/validation only and never touch the test split.",
     )
     parser.add_argument("--checkpoint", default="AutonLab/MOMENT-1-small")
     parser.add_argument("--seq-len", type=int, default=512)
