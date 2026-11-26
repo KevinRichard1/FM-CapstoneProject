@@ -152,6 +152,7 @@ def build_model(args: argparse.Namespace, dataset_name: str, method: str, device
         "patch_len": args.patch_len,
         "freeze_encoder": True,
         "freeze_embedder": True,
+        "randomly_initialize_backbone": args.random_backbone,
         "device": device,
     }
     if dataset_name == "weather":
@@ -280,10 +281,14 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     set_seed(args.seed)
     device = resolve_device(args.device)
     task = DATASET_SETTINGS[dataset_name]["task"]
-    model_name = f"moment_{'linear_probe' if method == 'linear' else 'lora'}"
+    suffix = "_random" if args.random_backbone else ""
+    model_name = (
+        f"moment{suffix}_{'linear_probe' if method == 'linear' else 'lora'}"
+    )
     logger = get_logger(
-        f"{dataset_name}.{method}",
-        Path(args.log_dir) / f"moment_{dataset_name}_{method}_seed{args.seed}.log",
+        f"{dataset_name}.{method}{suffix}",
+        Path(args.log_dir)
+        / f"moment_{dataset_name}_{method}{suffix}_seed{args.seed}.log",
     )
     logger.info("Starting %s on %s (device=%s)", model_name, dataset_name, device)
 
@@ -300,6 +305,7 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         "method": method,
         "model_name": model_name,
         "checkpoint": args.checkpoint,
+        "random_backbone": args.random_backbone,
         "seed": args.seed,
         "device": str(device),
         "batch_size": args.batch_size,
@@ -331,7 +337,8 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         weight_decay=args.weight_decay,
     )
     checkpoint_path = (
-        Path(args.checkpoint_dir) / f"{dataset_name}_{method}_seed{args.seed}.pt"
+        Path(args.checkpoint_dir)
+        / f"{dataset_name}_{method}{suffix}_seed{args.seed}.pt"
     )
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -449,7 +456,7 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
                 args.seed,
             )
 
-        prefix = f"{dataset_name}_{method}_seed{args.seed}_{split}"
+        prefix = f"{dataset_name}_{method}{suffix}_seed{args.seed}_{split}"
         if task == "classification":
             save_classification_predictions(
                 prediction_dir / f"{prefix}.csv", results
@@ -466,14 +473,16 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     metric_path = Path(args.output_dir) / "moment.csv"
     append_metric_rows(rows, metric_path)
     history_path = (
-        Path(args.output_dir) / f"moment_history_{dataset_name}_{method}_seed{args.seed}.json"
+        Path(args.output_dir)
+        / f"moment_history_{dataset_name}_{method}{suffix}_seed{args.seed}.json"
     )
     history_path.write_text(
         json.dumps({"config": config, "epochs": history}, indent=2, default=str),
         encoding="utf-8",
     )
     config_path = (
-        Path(args.output_dir) / f"moment_config_{dataset_name}_{method}_seed{args.seed}.json"
+        Path(args.output_dir)
+        / f"moment_config_{dataset_name}_{method}{suffix}_seed{args.seed}.json"
     )
     config_path.write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
 
@@ -487,6 +496,8 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     return {
         "dataset": dataset_name,
         "method": method,
+        "model_name": model_name,
+        "random_backbone": args.random_backbone,
         "best_epoch": best_epoch,
         "config": config_path.as_posix(),
         "history": history_path.as_posix(),
@@ -501,6 +512,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", nargs="+", choices=["linear", "lora"], default=["linear", "lora"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default="auto")
+    parser.add_argument(
+        "--random-backbone",
+        action="store_true",
+        help="Replace pretrained backbone weights with random initialization (ablation only).",
+    )
     parser.add_argument("--checkpoint", default="AutonLab/MOMENT-1-small")
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--patch-len", type=int, default=8)

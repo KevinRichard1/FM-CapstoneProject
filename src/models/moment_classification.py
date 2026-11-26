@@ -6,6 +6,7 @@ from typing import Literal
 
 import torch
 from momentfm import MOMENTPipeline
+from transformers import T5Config, T5EncoderModel
 
 
 def build_moment_classifier(
@@ -17,6 +18,7 @@ def build_moment_classifier(
     reduction: Literal["concat", "mean"] = "concat",
     freeze_encoder: bool = True,
     freeze_embedder: bool = True,
+    randomly_initialize_backbone: bool = False,
     device: str | torch.device = "auto",
 ) -> MOMENTPipeline:
     """Load MOMENT-1-Small with a newly initialized classification head.
@@ -35,8 +37,26 @@ def build_moment_classifier(
     }
     model = MOMENTPipeline.from_pretrained(checkpoint, model_kwargs=model_kwargs)
     model.init()
+    if randomly_initialize_backbone:
+        randomize_encoder_weights(model)
     model.to(resolve_device(device))
     return model
+
+
+def randomize_encoder_weights(model) -> None:
+    """Replace MOMENT's loaded T5 encoder with freshly initialized weights.
+
+    ``from_pretrained`` restores checkpoint weights after MOMENT constructs the
+    backbone, so ``randomly_initialize_backbone`` in the model config is not
+    sufficient. This function performs the ablation reinitialization explicitly.
+    """
+    device = next(model.parameters()).device
+    t5_config = T5Config.from_dict(model.config.t5_config)
+    random_encoder = T5EncoderModel(t5_config).get_encoder()
+    if getattr(model.encoder, "is_gradient_checkpointing", False):
+        random_encoder.gradient_checkpointing_enable()
+    model.encoder = random_encoder
+    model.to(device)
 
 
 def resolve_device(device: str | torch.device) -> torch.device:

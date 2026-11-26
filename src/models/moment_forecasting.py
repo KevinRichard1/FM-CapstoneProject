@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 from momentfm import MOMENTPipeline
 
-from src.models.moment_classification import resolve_device
+from src.models.moment_classification import randomize_encoder_weights, resolve_device
 
 
 def build_moment_forecaster(
@@ -16,6 +16,7 @@ def build_moment_forecaster(
     patch_len: int = 8,
     freeze_encoder: bool = True,
     freeze_embedder: bool = True,
+    randomly_initialize_backbone: bool = False,
     device: str | torch.device = "auto",
 ) -> MOMENTPipeline:
     """Load MOMENT-1-Small with a newly initialized forecasting head."""
@@ -30,6 +31,8 @@ def build_moment_forecaster(
     }
     model = MOMENTPipeline.from_pretrained(checkpoint, model_kwargs=model_kwargs)
     model.init()
+    if randomly_initialize_backbone:
+        randomize_encoder_weights(model)
     model.to(resolve_device(device))
     return model
 
