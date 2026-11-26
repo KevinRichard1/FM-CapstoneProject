@@ -1,0 +1,10 @@
+dataset:
+  source: huggingface
+  repo_id: ts-arena/weather
+  timestamp_column: date
+  target_column: "T (degC)"
+  context_len: 512
+  forecast_horizon: 144
+  split_ratios: [0.7, 0.1, 0.2]
+  rescale: false
+  note: "Published data are already standardized; do not normalize a second time."

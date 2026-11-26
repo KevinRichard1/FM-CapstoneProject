@@ -1,0 +1,15 @@
+project: fm-capstone
+seed: 42
+seeds: [42, 43, 44]
+device: auto
+
+paths:
+  data_root: data
+  outputs_root: outputs
+  manifests_root: data/manifests
+
+model:
+  checkpoint: AutonLab/MOMENT-1-small
+  seq_len: 512
+  patch_len: 8
+  recommended_python: "3.11"

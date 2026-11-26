@@ -1,0 +1,12 @@
+dataset:
+  source: local_hf_parquet_mirror
+  local_dir: data/Stocknet
+  parquet_file: train.parquet
+  symbol_column: stock_symbol
+  date_column: date
+  label_column: label
+  excluded_columns: [movement_percent, tweets, num_tweets, company_name, sector]
+  context_len: 512
+  split: chronological
+  split_boundaries: null
+  note: "Label semantics, OHLC scale, and date alignment must be audited before windowing."

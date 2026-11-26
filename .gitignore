@@ -1,4 +1,24 @@
-data/
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+.env
 
+# Large/private data and model artifacts
+/data/
+outputs/checkpoints/
+outputs/environment.txt
+outputs/predictions/*.npy
+outputs/predictions/*.npz
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Markdown: keep only the public README. PLAN.md is local working notes.
 *.md
 !README.md

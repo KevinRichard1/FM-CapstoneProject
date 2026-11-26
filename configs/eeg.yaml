@@ -1,0 +1,22 @@
+dataset:
+  raw_dir: data/ADFTD-RS
+  x_file: X-001.dat
+  y_file: y.dat
+  meta_file: meta.json
+  sample_rate_hz: 200
+  source_window_samples: 400
+  pad_to: 512
+  mask_padding: true
+  classes:
+    0: Control
+    1: AD
+    2: FTD
+  split_ratios:
+    train: 0.6
+    val: 0.2
+    test: 0.2
+  subject_level_aggregation: mean_probabilities
+
+model:
+  task_name: classification
+  num_class: 3
