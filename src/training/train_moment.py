@@ -217,6 +217,36 @@ def compute_loss(model, x, mask, target, task: str) -> torch.Tensor:
     return nn.functional.mse_loss(forecast, target)
 
 
+def build_optimizer(
+    args: argparse.Namespace, method: str, model: torch.nn.Module
+) -> tuple[torch.optim.Optimizer, dict[str, int]]:
+    """Use distinct LRs for LoRA adapters and the newly initialized head."""
+    trainable_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+    if method == "linear":
+        return (
+            torch.optim.AdamW(
+                trainable_params,
+                lr=args.lr_linear,
+                weight_decay=args.weight_decay,
+            ),
+            {"head": len(trainable_params)},
+        )
+
+    head_ids = {id(parameter) for parameter in model.head.parameters() if parameter.requires_grad}
+    head_params = [parameter for parameter in trainable_params if id(parameter) in head_ids]
+    adapter_params = [parameter for parameter in trainable_params if id(parameter) not in head_ids]
+    if not head_params or not adapter_params:
+        raise RuntimeError("LoRA requires both trainable adapter and head parameters")
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": head_params, "lr": args.lr_head},
+            {"params": adapter_params, "lr": args.lr_lora},
+        ],
+        weight_decay=args.weight_decay,
+    )
+    return optimizer, {"head": len(head_params), "adapter": len(adapter_params)}
+
+
 def evaluate_split(
     model,
     loader: DataLoader,
@@ -281,10 +311,9 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     set_seed(args.seed)
     device = resolve_device(args.device)
     task = DATASET_SETTINGS[dataset_name]["task"]
-    suffix = "_random" if args.random_backbone else ""
-    model_name = (
-        f"moment{suffix}_{'linear_probe' if method == 'linear' else 'lora'}"
-    )
+    tag_suffix = f"_{args.run_tag}" if args.run_tag else ""
+    suffix = tag_suffix + ("_random" if args.random_backbone else "")
+    model_name = f"moment{suffix}_{'linear_probe' if method == 'linear' else 'lora'}"
     logger = get_logger(
         f"{dataset_name}.{method}{suffix}",
         Path(args.log_dir)
@@ -306,10 +335,15 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         "model_name": model_name,
         "checkpoint": args.checkpoint,
         "random_backbone": args.random_backbone,
+        "run_tag": args.run_tag,
         "seed": args.seed,
         "device": str(device),
         "batch_size": args.batch_size,
-        "learning_rate": args.lr[method],
+        "learning_rate": (
+            {"adapter": args.lr_lora, "head": args.lr_head}
+            if method == "lora"
+            else {"head": args.lr_linear}
+        ),
         "weight_decay": args.weight_decay,
         "max_epochs": args.max_epochs,
         "patience": args.patience,
@@ -331,11 +365,8 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         config["forecast_horizon"] = weather_horizon(args)
         config["units"] = "standardized"
 
-    optimizer = torch.optim.AdamW(
-        trainable_params,
-        lr=args.lr[method],
-        weight_decay=args.weight_decay,
-    )
+    optimizer, optimizer_groups = build_optimizer(args, method, model)
+    config["optimizer_parameter_tensors"] = optimizer_groups
     checkpoint_path = (
         Path(args.checkpoint_dir)
         / f"{dataset_name}_{method}{suffix}_seed{args.seed}.pt"
@@ -517,6 +548,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Replace pretrained backbone weights with random initialization (ablation only).",
     )
+    parser.add_argument(
+        "--run-tag",
+        default=None,
+        help="Suffix appended to output names so reruns do not overwrite prior results.",
+    )
     parser.add_argument("--checkpoint", default="AutonLab/MOMENT-1-small")
     parser.add_argument("--seq-len", type=int, default=512)
     parser.add_argument("--patch-len", type=int, default=8)
@@ -526,8 +562,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--weight-decay", type=float, default=0.01)
-    parser.add_argument("--lr-linear", type=float, default=1e-3)
-    parser.add_argument("--lr-lora", type=float, default=1e-4)
+    parser.add_argument(
+        "--lr-linear", type=float, default=1e-3, help="Learning rate for linear-probe head."
+    )
+    parser.add_argument(
+        "--lr-head",
+        type=float,
+        default=1e-3,
+        help="Learning rate for the task head during LoRA adaptation.",
+    )
+    parser.add_argument(
+        "--lr-lora", type=float, default=1e-4, help="Learning rate for LoRA adapter parameters."
+    )
     parser.add_argument("--lora-rank", type=int, default=8)
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.1)
@@ -543,9 +589,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prediction-dir", default="outputs/predictions")
     parser.add_argument("--checkpoint-dir", default="outputs/checkpoints")
     parser.add_argument("--log-dir", default="outputs/logs")
-    args = parser.parse_args()
-    args.lr = {"linear": args.lr_linear, "lora": args.lr_lora}
-    return args
+    return parser.parse_args()
 
 
 def main() -> None:
