@@ -16,6 +16,10 @@ dataset:
     val: 0.2
     test: 0.2
   subject_level_aggregation: mean_probabilities
+  normalization:
+    method: per_channel_zscore
+    fit_on: train_subjects_200hz_only
+    scaler_path: data/processed/eeg_scaler.npz
 
 model:
   task_name: classification

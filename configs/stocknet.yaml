@@ -5,8 +5,13 @@ dataset:
   symbol_column: stock_symbol
   date_column: date
   label_column: label
-  excluded_columns: [movement_percent, tweets, num_tweets, company_name, sector]
+  excluded_columns: [movement_percent, tweets, num_tweets, company_name, sector, close]
+  features: [open, high, low, volume]
   context_len: 512
   split: chronological
-  split_boundaries: null
-  note: "Label semantics, OHLC scale, and date alignment must be audited before windowing."
+  split_boundaries:
+    train: ["2014-01-01", "2015-08-01"]
+    val: ["2015-08-01", "2015-10-01"]
+    test: ["2015-10-01", "2016-01-01"]
+  prediction_time: "inputs end on the trading day before the target movement"
+  note: "HF-derived StockNet task; label equals sign(movement_percent), not an exact reproduction."
