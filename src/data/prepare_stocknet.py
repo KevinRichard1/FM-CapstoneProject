@@ -14,7 +14,30 @@ PAPER_BOUNDARIES: dict[str, tuple[str, str]] = {
     "val": ("2015-08-01", "2015-10-01"),
     "test": ("2015-10-01", "2016-01-01"),
 }
-FEATURES = ["open", "high", "low", "volume"]
+BASE_FEATURES = ["open", "high", "low", "volume"]
+ENGINEERED_FEATURES = ["open_change", "high_low_spread", "volume_change"]
+FEATURES = BASE_FEATURES
+
+
+def add_engineered_features(frame: pd.DataFrame) -> pd.DataFrame:
+    """Add strictly backward-looking OHLCV-derived features.
+
+    ``close``, ``movement_percent``, tweets, and metadata are never touched. Each
+    derived value at row t uses only row t and earlier rows of the same symbol.
+    Differences are used instead of log ratios because the published numerical
+    values are transformed and can be negative.
+    """
+    frame = frame.copy()
+    grouped = frame.groupby("stock_symbol", sort=False)
+    previous_open = grouped["open"].shift(1).to_numpy(dtype=np.float64)
+    previous_volume = grouped["volume"].shift(1).to_numpy(dtype=np.float64)
+
+    frame["open_change"] = frame["open"].to_numpy(dtype=np.float64) - previous_open
+    frame["high_low_spread"] = (
+        frame["high"].to_numpy(dtype=np.float64) - frame["low"].to_numpy(dtype=np.float64)
+    )
+    frame["volume_change"] = frame["volume"].to_numpy(dtype=np.float64) - previous_volume
+    return frame
 
 
 def date_split(date: pd.Timestamp) -> str | None:
@@ -29,11 +52,15 @@ def prepare_stocknet(
     output_dir: Path,
     context_len: int = 512,
     features: list[str] | None = None,
+    engineered_features: bool = False,
 ) -> dict:
-    features = features or FEATURES
+    if features is None:
+        features = BASE_FEATURES + ENGINEERED_FEATURES if engineered_features else BASE_FEATURES
     frame = pd.read_parquet(parquet_path).sort_values(
         ["stock_symbol", "date"]
     ).reset_index(drop=True)
+    if engineered_features:
+        frame = add_engineered_features(frame)
     if frame.duplicated(["stock_symbol", "date"]).any():
         raise ValueError("Duplicate (stock_symbol, date) rows found")
 
@@ -41,14 +68,24 @@ def prepare_stocknet(
     train_mask = (targets >= pd.Timestamp(PAPER_BOUNDARIES["train"][0])) & (
         targets < pd.Timestamp(PAPER_BOUNDARIES["train"][1])
     )
-    train_values = frame.loc[train_mask, features].to_numpy(dtype=np.float64)
+    train_values = np.nan_to_num(
+        frame.loc[train_mask, features].to_numpy(dtype=np.float64),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
     if train_values.size == 0:
         raise ValueError("No rows in the training date range")
 
     mean = train_values.mean(axis=0)
     scale = train_values.std(axis=0)
     scale = np.where(scale < 1e-8, 1.0, scale)
-    scaled = frame[features].to_numpy(dtype=np.float64)
+    scaled = np.nan_to_num(
+        frame[features].to_numpy(dtype=np.float64),
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0,
+    )
     scaled = ((scaled - mean) / scale).astype(np.float32)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +151,8 @@ def prepare_stocknet(
         "source": str(parquet_path),
         "boundaries": {k: list(v) for k, v in PAPER_BOUNDARIES.items()},
         "features": features,
+        "engineered_features": engineered_features,
+        "derived_features": ENGINEERED_FEATURES if engineered_features else [],
         "excluded_columns": [
             "movement_percent",
             "tweets",
@@ -158,8 +197,18 @@ def main() -> None:
     parser.add_argument("--parquet", default="data/Stocknet/train.parquet")
     parser.add_argument("--output-dir", default="data/processed/stocknet")
     parser.add_argument("--context-len", type=int, default=512)
+    parser.add_argument(
+        "--engineered-features",
+        action="store_true",
+        help="Add backward-looking open-change, high-low spread, and volume-change features.",
+    )
     args = parser.parse_args()
-    manifest = prepare_stocknet(Path(args.parquet), Path(args.output_dir), args.context_len)
+    manifest = prepare_stocknet(
+        Path(args.parquet),
+        Path(args.output_dir),
+        args.context_len,
+        engineered_features=args.engineered_features,
+    )
     print(json.dumps(manifest, indent=2))
 
 

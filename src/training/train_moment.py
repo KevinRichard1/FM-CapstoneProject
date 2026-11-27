@@ -111,6 +111,13 @@ def weather_horizon(args: argparse.Namespace) -> int:
     return int(manifest["forecast_horizon"])
 
 
+def stocknet_channels(args: argparse.Namespace) -> int:
+    manifest = json.loads(
+        (Path(args.stocknet_processed) / "stocknet_manifest.json").read_text(encoding="utf-8")
+    )
+    return len(manifest["features"])
+
+
 def build_loaders(args: argparse.Namespace, dataset_name: str) -> dict[str, DataLoader]:
     train_limit = args.train_limit if dataset_name != "weather" or args.train_limit else None
     val_limit = args.val_limit if dataset_name != "weather" or args.val_limit else None
@@ -146,6 +153,7 @@ def build_loaders(args: argparse.Namespace, dataset_name: str) -> dict[str, Data
 
 def build_model(args: argparse.Namespace, dataset_name: str, method: str, device):
     settings = DATASET_SETTINGS[dataset_name]
+    channels = stocknet_channels(args) if dataset_name == "stocknet" else settings["channels"]
     common = {
         "checkpoint": args.checkpoint,
         "seq_len": args.seq_len,
@@ -158,13 +166,13 @@ def build_model(args: argparse.Namespace, dataset_name: str, method: str, device
     if dataset_name == "weather":
         model = build_moment_forecaster(
             forecast_horizon=weather_horizon(args),
-            n_channels=settings["channels"],
+            n_channels=channels,
             **common,
         )
     else:
         model = build_moment_classifier(
             num_class=settings["num_class"],
-            n_channels=settings["channels"],
+            n_channels=channels,
             reduction="concat",
             **common,
         )
@@ -334,6 +342,9 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
         "dataset": dataset_name,
         "task": task,
         "method": method,
+        "channels": (
+            stocknet_channels(args) if dataset_name == "stocknet" else DATASET_SETTINGS[dataset_name]["channels"]
+        ),
         "model_name": model_name,
         "checkpoint": args.checkpoint,
         "random_backbone": args.random_backbone,
