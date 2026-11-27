@@ -49,7 +49,7 @@ def classify_model(dataset: str, model: str) -> str:
         return "headline"
     if "random" in model:
         return "random_backbone_ablation"
-    if any(tag in model for tag in ("headlr", "snet_", "wx_lora", "feat_")):
+    if any(tag in model for tag in ("headlr", "snet_", "wx_lora", "feat_", "ctx")):
         return "tuning_variant"
     return "standard_moment"
 
@@ -77,6 +77,7 @@ def efficiency_fields(config: dict | None, history: list[dict] | None = None) ->
             "checkpoint_size_mb": None,
             "batch_size": None,
             "learning_rate": None,
+            "class_weight": None,
             "best_epoch": None,
         }
     counts = config.get("parameter_counts", {})
@@ -99,6 +100,9 @@ def efficiency_fields(config: dict | None, history: list[dict] | None = None) ->
         "checkpoint_size_mb": config.get("checkpoint_size_mb"),
         "batch_size": config.get("batch_size"),
         "learning_rate": json.dumps(config.get("learning_rate"), sort_keys=True),
+        "class_weight": json.dumps(config.get("class_weight"), sort_keys=True)
+        if config.get("class_weight") is not None
+        else None,
         "best_epoch": config.get("best_epoch"),
     }
 

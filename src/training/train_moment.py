@@ -104,6 +104,30 @@ def make_loader(
     )
 
 
+def classification_class_weights(
+    loader: DataLoader,
+    num_class: int,
+    mode: str,
+    device,
+) -> tuple[torch.Tensor | None, list[float] | None]:
+    """Return inverse-frequency weights computed from the actual training subset."""
+    if mode == "none":
+        return None, None
+    if mode != "balanced":
+        raise ValueError(f"Unknown class-weight mode: {mode}")
+
+    labels = np.array(
+        [int(loader.dataset[index]["label"]) for index in range(len(loader.dataset))],
+        dtype=np.int64,
+    )
+    counts = np.bincount(labels, minlength=num_class).astype(np.float64)
+    if np.any(counts == 0):
+        raise ValueError(f"Missing class in training subset: {counts.tolist()}")
+    values = counts.sum() / (num_class * counts)
+    tensor = torch.tensor(values, dtype=torch.float32, device=device)
+    return tensor, [float(value) for value in values]
+
+
 def weather_horizon(args: argparse.Namespace) -> int:
     manifest = json.loads(
         (Path(args.weather_processed) / "weather_manifest.json").read_text(encoding="utf-8")
@@ -211,12 +235,21 @@ def prepare_batch(batch: dict, task: str, device):
     return x, mask, target
 
 
-def compute_loss(model, x, mask, target, task: str) -> torch.Tensor:
+def compute_loss(
+    model,
+    x,
+    mask,
+    target,
+    task: str,
+    class_weight: torch.Tensor | None = None,
+) -> torch.Tensor:
     outputs = model(x_enc=x, input_mask=mask)
     if task == "classification":
         from src.models.moment_classification import extract_logits
 
-        return nn.functional.cross_entropy(extract_logits(outputs).float(), target)
+        return nn.functional.cross_entropy(
+            extract_logits(outputs).float(), target, weight=class_weight
+        )
     from src.models.moment_forecasting import extract_forecast
 
     forecast = extract_forecast(outputs).float()
@@ -319,6 +352,9 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
     set_seed(args.seed)
     device = resolve_device(args.device)
     task = DATASET_SETTINGS[dataset_name]["task"]
+    num_class = DATASET_SETTINGS[dataset_name].get("num_class")
+    if task != "classification" and args.class_weight != "none":
+        raise ValueError("--class-weight is only valid for classification datasets")
     tag_suffix = f"_{args.run_tag}" if args.run_tag else ""
     if args.skip_test:
         tag_suffix += "_tune"
@@ -333,6 +369,11 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
 
     loaders = build_loaders(args, dataset_name)
     identifier_keys = loaders.pop("_identifier_keys")
+    class_weight, class_weight_values = (
+        classification_class_weights(loaders["train"], num_class, args.class_weight, device)
+        if task == "classification"
+        else (None, None)
+    )
     model, counts, checkpointing_disabled = build_model(args, dataset_name, method, device)
     trainable_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
     if not trainable_params:
@@ -359,6 +400,7 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
             else {"head": args.lr_linear}
         ),
         "weight_decay": args.weight_decay,
+        "class_weight": {"mode": args.class_weight, "values": class_weight_values},
         "max_epochs": args.max_epochs,
         "patience": args.patience,
         "grad_accumulation": args.grad_accum,
@@ -402,7 +444,7 @@ def run_experiment(args: argparse.Namespace, dataset_name: str, method: str) -> 
 
         for step, batch in enumerate(loaders["train"]):
             x, mask, target = prepare_batch(batch, task, device)
-            loss = compute_loss(model, x, mask, target, task)
+            loss = compute_loss(model, x, mask, target, task, class_weight)
             (loss / args.grad_accum).backward()
             if (step + 1) % args.grad_accum == 0 or (step + 1) == len(loaders["train"]):
                 torch.nn.utils.clip_grad_norm_(trainable_params, args.grad_clip)
@@ -589,6 +631,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad-accum", type=int, default=1)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument(
+        "--class-weight",
+        choices=["none", "balanced"],
+        default="none",
+        help="Use inverse-frequency cross-entropy weights from the training subset.",
+    )
     parser.add_argument(
         "--lr-linear", type=float, default=1e-3, help="Learning rate for linear-probe head."
     )
