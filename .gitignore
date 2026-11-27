@@ -9,10 +9,14 @@ __pycache__/
 
 # Large/private data and model artifacts
 /data/
-outputs/checkpoints/
-outputs/environment.txt
-outputs/predictions/*.npy
-outputs/predictions/*.npz
+
+# Generated experiment outputs stay local; keep only directory placeholders.
+/outputs/*
+!/outputs/.gitkeep
+!/outputs/*/
+/outputs/checkpoints/
+/outputs/*/*
+!/outputs/*/.gitkeep
 
 # Editors / OS
 .DS_Store
